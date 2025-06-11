@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sensor & LED Control</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            text-align: center;
+            background-color: #f4f4f4;
+        }
+        h1 {
+            color: #333;
+        }
+        .container {
+            max-width: 800px;
+            margin: 20px auto;
+            background-color: #fff;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.1);
+        }
+        .sensor-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); /* 2 or 3 items per row */
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+        .sensor-gauge {
+            border: 1px solid #ddd;
+            padding: 15px;
+            border-radius: 5px;
+            background-color: #e9e9e9;
+            text-align: left;
+        }
+        .sensor-gauge h3 {
+            margin-top: 0;
+            color: #555;
+        }
+        .sensor-value {
+            font-size: 24px;
+            font-weight: bold;
+            color: #007bff; /* A blue color */
+        }
+        .controls {
+            margin-bottom: 30px;
+        }
+        button {
+            padding: 10px 20px;
+            margin: 5px; /* Reduced margin */
+            font-size: 16px;
+            cursor: pointer;
+            border: none;
+            border-radius: 5px;
+            color: white;
+        }
+        button.led-on { background-color: #28a745; } /* Green */
+        button.led-off { background-color: #dc3545; } /* Red */
+        button.send-msg { background-color: #007bff; } /* Blue */
+
+        button:hover {
+            opacity: 0.9;
+        }
+
+        .message-box {
+            margin-top: 20px;
+            padding: 10px;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+            background-color: #f9f9f9;
+            text-align: left;
+        }
+        .message-box h3 {
+             margin-top: 0;
+             color: #555;
+        }
+        #messages {
+            max-height: 150px;
+            overflow-y: auto; /* Add scroll if messages exceed height */
+            border-top: 1px solid #eee;
+            padding-top: 10px;
+        }
+        #messages p {
+            margin: 5px 0;
+            padding: 5px;
+            border-bottom: 1px dotted #eee;
+        }
+
+        .chat-input {
+            margin-top: 15px;
+        }
+        .chat-input input[type="text"] {
+            width: calc(100% - 90px); /* Adjust width considering button */
+            padding: 8px;
+            margin-right: 5px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            font-size: 16px;
+        }
+        .chat-input button {
+             padding: 8px 15px;
+             font-size: 16px;
+             margin: 0; /* Remove extra margin */
+        }
+
+        #status {
+            margin-top: 20px;
+            padding: 10px;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+            background-color: #ffffcc; /* Light yellow for status */
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>ESP32 Dashboard</h1>
+
+        <div id="status">Waiting for server...</div>
+
+        <h2>Sensor Readings</h2>
+        <div class="sensor-grid">
+            <div class="sensor-gauge">
+                <h3>Temperature (°C)</h3>
+                <div id="sensor-temp" class="sensor-value">--</div>
+            </div>
+            <div class="sensor-gauge">
+                <h3>Temperature (°C)</h3>
+                <div id="sensor-humidity" class="sensor-value">--</div>
+            </div>
+			<div class="sensor-gauge">
+                <h3>Speed_1</h3>
+                <div id="sensor-pressure" class="sensor-value">--</div>
+            </div>
+            <div class="sensor-gauge">
+                <h3>Speed_2</h3>
+                <div id="sensor-light" class="sensor-value">--</div>
+            </div>
+            <div class="sensor-gauge">
+                <h3>Speed_3</h3>
+                <div id="sensor-gas" class="sensor-value">--</div>
+            </div>
+            <div class="sensor-gauge">
+                <h3>Speed_4</h3>
+                <div id="sensor-motion" class="sensor-value">--</div>
+            </div>
+        </div>
+
+        <h2>LED Control</h2>
+        <div class="controls">
+            <button class="led-on" onclick="sendCommand('LED1_ON')">Turn On LED 1</button>
+            <button class="led-off" onclick="sendCommand('LED1_OFF')">Turn Off LED 1</button>
+             </div>
+
+        <h2>Messages</h2>
+        <div class="message-box">
+            <div id="messages">
+                </div>
+            <div class="chat-input">
+                <input type="text" id="messageInput" placeholder="Type a message...">
+                <button class="send-msg" onclick="sendMessage()">Send</button>
+            </div>
+        </div>
+
+    </div> <script>
+        const ws = new WebSocket('wss://enhancement-abc-weighted-cover.trycloudflare.com'); // Update WebSocket server address if needed
+
+        // Event handlers for WebSocket
+        ws.onopen = () => {
+            document.getElementById('status').innerHTML = '✅ Connected to WebSocket server.';
+            console.log('WebSocket connected');
+        };
+
+        ws.onclose = () => {
+            document.getElementById('status').innerHTML = '❌ Disconnected from WebSocket server.';
+            console.log('WebSocket disconnected');
+        };
+
+        ws.onerror = (error) => {
+            document.getElementById('status').innerHTML = '❗️ WebSocket Error!';
+            console.error('WebSocket error:', error);
+        };
+
+        // Handle incoming messages from the server
+        ws.onmessage = (event) => {
+            console.log('Message from server:', event.data);
+            try {
+                const message = JSON.parse(event.data); // Try to parse as JSON
+
+                if (message.type === 'sensor_data') {
+                    // Update sensor values
+                    document.getElementById('sensor-temp').innerHTML = message.temperature !== undefined ? message.temperature.toFixed(1) : '--';
+                    document.getElementById('sensor-humidity').innerHTML = message.humidity !== undefined ? message.humidity.toFixed(1) : '--';
+                    document.getElementById('sensor-pressure').innerHTML = message.pressure !== undefined ? message.pressure.toFixed(0) : '--';
+                    document.getElementById('sensor-light').innerHTML = message.light !== undefined ? message.light.toFixed(0) : '--';
+                    document.getElementById('sensor-gas').innerHTML = message.gas !== undefined ? message.gas.toFixed(0) : '--';
+                    document.getElementById('sensor-motion').innerHTML = message.motion !== undefined ? (message.motion ? 'Detected' : 'Clear') : '--'; // Example for boolean motion
+                     // You might also update the status div if the server sends a status confirmation
+                     document.getElementById('status').innerHTML = 'Sensor data received.';
+
+                } else if (message.type === 'chat_message') {
+                    // Display a chat message
+                    const messagesDiv = document.getElementById('messages');
+                    const p = document.createElement('p');
+                    // Add sender info if available in JSON, otherwise just content
+                    p.textContent = `Guest: ${message.content}`; // Basic sender as "Guest"
+                    messagesDiv.appendChild(p);
+                    messagesDiv.scrollTop = messagesDiv.scrollHeight; // Auto-scroll to latest message
+				} else if (message.type === 'status_update') {
+                     // Handle other status messages from the server
+                     document.getElementById('status').innerHTML = message.content;
+
+                } else {
+                     // Handle raw text messages or unknown JSON types
+                     console.warn('Received unknown message type or raw text:', event.data);
+                     // Optionally display raw messages somewhere
+                     // document.getElementById('status').innerHTML = Server: ${event.data};
+                }
+
+            } catch (e) {
+                // If parsing fails, treat as a raw text message
+                console.warn('Received non-JSON message:', event.data);
+                 // You can choose to display these raw messages in the status area
+                 document.getElementById('status').innerHTML = `Server Status: ${event.data}`;
+            }
+        };
+
+        // Function to send LED commands
+        function sendCommand(command) {
+            if (ws.readyState === WebSocket.OPEN) {
+                 ws.send(JSON.stringify({ type: 'command', content: command })); // Send command as JSON
+                 console.log('Sent command:', command);
+                 document.getElementById('status').innerHTML = `Sending command: ${command}`;
+            } else {
+                document.getElementById('status').innerHTML = '❗️ Not connected to send command.';
+                console.warn('WebSocket not open.');
+            }
+        }
+
+        // Function to send a chat message
+        function sendMessage() {
+            const messageInput = document.getElementById('messageInput');
+            const messageText = messageInput.value;
+
+            if (messageText.trim() === '') {
+                return; // Don't send empty messages
+            }
+
+             if (ws.readyState === WebSocket.OPEN) {
+                 // Send the message as a JSON object
+                 ws.send(JSON.stringify({ type: 'chat_message', content: messageText }));
+                 console.log('Sent message:', messageText);
+                 messageInput.value = ''; // Clear the input field
+                 document.getElementById('status').innerHTML = 'Message sent.';
+             } else {
+                document.getElementById('status').innerHTML = '❗️ Not connected to send message.';
+                console.warn('WebSocket not open.');
+             }
+        }
+
+         // Allow sending message by pressing Enter in the input field
+         document.getElementById('messageInput').addEventListener('keypress', function(event) {
+            if (event.key === 'Enter') {
+                 event.preventDefault(); // Prevent default form submission if inside a form
+                 sendMessage();
+            }
+         });
+
+    </script>
+</body>
+</html>
