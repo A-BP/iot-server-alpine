@@ -8,7 +8,7 @@ echo ""
 
 # --- خواندن تنظیمات از مسیر جدید شما روی فلش ---
 # !! تنها تغییر در این خط است !!
-CONFIG_SRC_FILE="/media/usb/command/iot-config.txt"
+CONFIG_SRC_FILE="/media/com/command/iot-config.txt"
 # ----------------------------------------------------
 
 INSTALL_DIR="/opt/iot-server"
