@@ -4,7 +4,7 @@ set -e
 
 # نمایش پیام خوش‌آمدگویی و اطلاعات اولیه
 echo "================================================="
-echo "   IoT Server Initial Setup Script for Alpine (v2) "
+echo "   IoT Server Initial Setup Script for Alpine (v3) "
 echo "================================================="
 echo "NOTE: This script should be run as the 'root' user."
 echo ""
@@ -12,12 +12,17 @@ echo ""
 # مرحله ۱: به‌روزرسانی سیستم و نصب پیش‌نیازهای صحیح
 echo "--> Step 1 of 8: Updating system and installing dependencies..."
 apk update
-# در Alpine، پکیج npm به همراه nodejs نصب می‌شود.
-apk add bash nodejs git curl
+# در این نسخه، nodejs و npm را به صورت صریح درخواست می‌کنیم
+apk add bash nodejs npm git curl
+
+# --- تغییر کلیدی برای حل مشکل command not found ---
+# این دستور به شل می‌گوید تا دستورات جدید نصب شده را دوباره شناسایی کند
+hash -r
+# ----------------------------------------------------
 
 # مرحله ۲: نصب PM2
 echo "--> Step 2 of 8: Installing PM2 process manager globally..."
-# حالا npm باید در دسترس باشد
+# حالا npm باید بدون مشکل اجرا شود
 npm install -g pm2
 
 # مرحله ۳: نصب Cloudflare Tunnel (cloudflared)
@@ -27,12 +32,12 @@ chmod +x cloudflared
 mv cloudflared /usr/local/bin/
 
 # مرحله ۴: دانلود کد اصلی سرور از گیت‌هاب شما
-# ==============================================================================
 # !! مهم: آدرس گیت‌هاب خود را در خط زیر با آدرس صحیح جایگزین کنید !!
 GITHUB_REPO_URL="https://github.com/A-BP/iot-server-alpine.git"
-# ==============================================================================
 INSTALL_DIR="/opt/iot-server"
 echo "--> Step 4 of 8: Cloning the server code from ${GITHUB_REPO_URL}..."
+# قبل از کلون کردن، پوشه قبلی (اگر وجود دارد) را پاک می‌کنیم تا از خطا جلوگیری شود
+rm -rf "${INSTALL_DIR}"
 git clone "${GITHUB_REPO_URL}" "${INSTALL_DIR}"
 
 # بررسی اینکه آیا git clone موفقیت‌آمیز بوده است یا خیر
@@ -42,7 +47,7 @@ if [ ! -d "${INSTALL_DIR}" ]; then
     exit 1
 fi
 
-# مرحله ۵: نصب وابستگی‌های Node.js
+# مرحله ۵: نصب وابستگی‌های پروژه Node.js
 echo "--> Step 5 of 8: Installing Node.js project dependencies..."
 cd "${INSTALL_DIR}" && npm install
 
