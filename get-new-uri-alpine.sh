@@ -1,46 +1,38 @@
 #!/bin/bash
-echo "--> Attempting to generate a new WSS URI (Robust, Two-Stage Wait)..."
+echo "--> Attempting to generate a new WSS URI (using nohup)..."
 
 INSTALL_DIR="/opt/iot-server"
 HTML_FILE_PATH="${INSTALL_DIR}/public/index.html"
-LOG_FILE="/root/.pm2/logs/cflare-tunnel-out.log"
+# ما لاگ را در پوشه پروژه ذخیره می‌کنیم تا دسترسی به آن آسان باشد
+LOG_FILE="${INSTALL_DIR}/cloudflared.log"
 
-# پاک‌سازی و آماده‌سازی
-pm2 delete cflare-tunnel > /dev/null 2>&1
-if [ -f "$LOG_FILE" ]; then rm "$LOG_FILE"; fi
+# --- پاک‌سازی و آماده‌سازی ---
+# هر پروسه cloudflared قبلی را متوقف می‌کند
+pkill -f cloudflared || true
+sleep 1
+# فایل لاگ قبلی را پاک می‌کند
+rm -f "$LOG_FILE"
+# فایل HTML را به حالت اولیه برمی‌گرداند
 if [ -f "${HTML_FILE_PATH}.template" ]; then cp "${HTML_FILE_PATH}.template" "$HTML_FILE_PATH"; fi
 
-echo "--> Starting a new tunnel via PM2..."
-pm2 start "/usr/local/bin/cloudflared tunnel --url http://localhost:8000" --name "cflare-tunnel"
+# --- اجرای cloudflared با روش استاندارد لینوکس ---
+echo "--> Starting a new tunnel in the background..."
+# nohup: باعث می‌شود پروسه پس از بستن ترمینال به کار خود ادامه دهد
+# > "$LOG_FILE" 2>&1: خروجی و خطاها را در فایل لاگ می‌نویسد
+# &: پروسه را در پس‌زمینه اجرا می‌کند
+nohup /usr/local/bin/cloudflared tunnel --url http://localhost:8000 > "$LOG_FILE" 2>&1 &
 
-# --- مرحله ۱: انتظار هوشمند برای ایجاد فایل لاگ ---
-echo "--> Waiting for log file to be created by PM2..."
-ATTEMPTS=0
-MAX_ATTEMPTS=10 # 10 ثانیه برای ایجاد فایل لاگ
-while [ ! -s "$LOG_FILE" ] && [ $ATTEMPTS -lt $MAX_ATTEMPTS ]; do
-    sleep 1
-    ATTEMPTS=$((ATTEMPTS + 1))
-    printf "."
-done
+echo "--> Waiting for tunnel to establish... (up to 30 seconds)"
 
-echo "" # یک خط جدید
-
-# اگر پس از ۱۰ ثانیه فایل لاگ هنوز ساخته نشده، خطا می‌دهیم
-if [ ! -s "$LOG_FILE" ]; then
-    echo "❌ ERROR: Log file was not created by PM2 after 10 seconds."
-    echo "Please check PM2 status with: pm2 list"
-    exit 1
-fi
-# -----------------------------------------------
-
-# --- مرحله ۲: انتظار هوشمند برای پیدا کردن URI در فایل لاگ ---
-echo "--> Log file found! Now searching for URI inside it... (up to 40 seconds)"
+# --- حلقه هوشمند برای پیدا کردن URI از فایل لاگ جدید ---
 URI=""
 ATTEMPTS=0
-MAX_ATTEMPTS=20 # 20 بار تلاش ۲ ثانیه‌ای = ۴۰ ثانیه
+MAX_ATTEMPTS=15
 while [ -z "$URI" ] && [ $ATTEMPTS -lt $MAX_ATTEMPTS ]; do
     sleep 2
-    URI=$(grep -o 'https://[a-z0-9-]*\.trycloudflare.com' "$LOG_FILE" | head -n 1)
+    if [ -f "$LOG_FILE" ]; then
+        URI=$(grep -o 'https://[a-z0-9-]*\.trycloudflare.com' "$LOG_FILE" | head -n 1)
+    fi
     ATTEMPTS=$((ATTEMPTS + 1))
     printf "."
 done
@@ -54,16 +46,13 @@ if [ -n "$URI" ]; then
     sed -i "s|WSS_URI_PLACEHOLDER|${WSS_URI}|g" "$HTML_FILE_PATH"
 
     echo ""
-    echo "✅✅✅ SUCCESS! New URI Generated and Applied! ✅✅✅"
+    echo "✅✅✅ SUCCESS! New URI Generated! ✅✅✅"
     echo "=================================================="
     echo "HTTP address (for browser): ${URI}"
     echo "WSS address (for ESP32):    ${WSS_URI}"
     echo "=================================================="
 else
-    echo "❌ ERROR: Could not find a URI in the log file after timeout."
-    echo "Cloudflared might be having trouble connecting. Check logs with: cat ${LOG_FILE}"
-    pm2 delete cflare-tunnel
+    echo "❌ ERROR: Could not retrieve a tunnel URI after 30 seconds."
+    echo "Please check the log file for errors: cat ${LOG_FILE}"
     exit 1
 fi
-
-pm2 flush cflare-tunnel > /dev/null 2>&1
