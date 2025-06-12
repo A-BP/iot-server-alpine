@@ -1,64 +1,58 @@
 #!/bin/bash
+echo "--> Attempting to generate a new WSS URI..."
 
-echo "============================================="
-echo "      Get New WSS URI Script for Alpine      "
-echo "============================================="
-
-# مسیر نصب پروژه را مشخص می‌کند
 INSTALL_DIR="/opt/iot-server"
-# مسیر کامل فایل HTML که باید آپدیت شود
 HTML_FILE_PATH="${INSTALL_DIR}/public/index.html"
+# آدرس فایل لاگ مربوط به تونل (با فرض اینکه اسکریپت با کاربر root اجرا می‌شود)
+LOG_FILE="/root/.pm2/logs/cflare-tunnel-out.log"
 
-# بررسی می‌کند که آیا PM2 نصب و در دسترس است یا خیر
-if ! command -v pm2 &> /dev/null
-then
-    echo "❌ Error: PM2 is not installed. Please run the main setup script first."
-    exit 1
-fi
-
-echo "--> Preparing HTML file template..."
-# اگر فایل پشتیبان (template) از index.html وجود ندارد، آن را ایجاد می‌کند.
-# این کار تضمین می‌کند که ما همیشه یک نسخه اصلی با Placeholder داریم.
-if [ ! -f "${HTML_FILE_PATH}.template" ]; then
-    cp "$HTML_FILE_PATH" "${HTML_FILE_PATH}.template"
-fi
-# فایل HTML فعلی را با نسخه اصلی (دارای Placeholder) بازنویسی می‌کنیم
+# ... (کدهای مربوط به بازنویسی فایل HTML با Placeholder) ...
+if [ ! -f "${HTML_FILE_PATH}.template" ]; then cp "$HTML_FILE_PATH" "${HTML_FILE_PATH}.template"; fi
 cp "${HTML_FILE_PATH}.template" "$HTML_FILE_PATH"
 
-echo "--> Stopping the old tunnel (if it exists)..."
-# فرآیند تونل قبلی را در PM2 حذف می‌کند تا از اجرای همزمان چند تونل جلوگیری شود
 pm2 delete cflare-tunnel > /dev/null 2>&1
 
-echo "--> Starting a new tunnel..."
-# تونل جدید را با PM2 راه‌اندازی می‌کند
-# استفاده از --no-autoupdate از نمایش پیام‌های اضافی در لاگ جلوگیری می‌کند
+echo "--> Starting a new tunnel via PM2..."
 pm2 start "cloudflared tunnel --no-autoupdate --url http://localhost:8000" --name "cflare-tunnel"
 
-# چند ثانیه صبر می‌کند تا تونل زمان کافی برای راه‌اندازی و تولید لاگ داشته باشد
-echo "--> Waiting for tunnel to establish... (approx. 8 seconds)"
-sleep 8
+echo "--> Waiting for tunnel to establish... (up to 30 seconds)"
 
-echo "--> Fetching the new URI from logs..."
-# آدرس URI جدید را از لاگ‌های PM2 با دقت استخراج می‌کند
-URI=$(pm2 logs cflare-tunnel --lines 20 | grep -o 'https://[a-z0-9-]*\.trycloudflare.com' | head -n 1)
+# --- حلقه هوشمند برای پیدا کردن URI از فایل لاگ ---
+URI=""
+ATTEMPTS=0
+MAX_ATTEMPTS=15
 
-# بررسی می‌کند که آیا آدرس با موفقیت استخراج شده است یا خیر
+while [ -z "$URI" ] && [ $ATTEMPTS -lt $MAX_ATTEMPTS ]; do
+    sleep 2
+    # بررسی می‌کنیم که آیا فایل لاگ اصلاً ایجاد شده است یا خیر
+    if [ -f "$LOG_FILE" ]; then
+        # تغییر کلیدی: به جای pm2 logs، مستقیماً فایل لاگ را می‌خوانیم
+        URI=$(grep -o 'https://[a-z0-9-]*\.trycloudflare.com' "$LOG_FILE" | head -n 1)
+    fi
+    ATTEMPTS=$((ATTEMPTS + 1))
+    printf "."
+done
+# ------------------------------------
+
+echo ""
+
 if [ -n "$URI" ]; then
     WSS_URI="wss://${URI#https://}"
-    
     echo "--> Updating HTML file at ${HTML_FILE_PATH}..."
-    # Placeholder را با آدرس جدید در فایل HTML جایگزین می‌کند
     sed -i "s|WSS_URI_PLACEHOLDER|${WSS_URI}|g" "$HTML_FILE_PATH"
 
     echo ""
-    echo "✅ New URI Generated Successfully!"
+    echo "✅✅✅ New URI Generated Successfully! ✅✅✅"
     echo "=================================================="
     echo "Your HTTP address for browser is: ${URI}"
     echo "Your WSS URI for ESP32 is:      ${WSS_URI}"
     echo "=================================================="
 else
-    echo "❌ Failed to retrieve a new URI. Please check logs using: pm2 logs cflare-tunnel"
+    echo "❌ ERROR: Could not retrieve a tunnel URI after 30 seconds."
+    echo "The tunnel started but failed to connect and generate a URL."
+    echo "Please check the tunnel logs manually for errors using: pm2 logs cflare-tunnel"
+    pm2 delete cflare-tunnel
+    exit 1
 fi
 
-# لاگ‌های PM2 را پاک می‌کند تا در اجرای بعدی تداخلی ایجاد نشود
 pm2 flush cflare-tunnel > /dev/null 2>&1
