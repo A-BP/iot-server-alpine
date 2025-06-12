@@ -1,43 +1,48 @@
 #!/bin/bash
-
-# این اسکریپت برای اجرا با کاربر root طراحی شده است که در Alpine معمول است.
-# اگر با کاربر دیگری اجرا می‌کنید، مطمئن شوید که دسترسی sudo دارید و دستورات را با sudo اجرا کنید.
+# 'set -e' باعث می‌شود اسکریپت با اولین خطا متوقف شود
+set -e
 
 # نمایش پیام خوش‌آمدگویی و اطلاعات اولیه
 echo "================================================="
-echo "   IoT Server Initial Setup Script for Alpine    "
+echo "   IoT Server Initial Setup Script for Alpine (v2) "
 echo "================================================="
-echo "This script will install all necessary components and configure your server."
+echo "NOTE: This script should be run as the 'root' user."
 echo ""
 
-# مرحله ۱: به‌روزرسانی سیستم و نصب پیش‌نیازهای اصلی
+# مرحله ۱: به‌روزرسانی سیستم و نصب پیش‌نیازهای صحیح
 echo "--> Step 1 of 8: Updating system and installing dependencies..."
 apk update
-# نصب bash, nodejs, npm, git و curl
-apk add bash nodejs npm git curl
+# در Alpine، پکیج npm به همراه nodejs نصب می‌شود.
+apk add bash nodejs git curl
 
-# مرحله ۲: نصب مدیر فرآیند PM2 به صورت سراسری
+# مرحله ۲: نصب PM2
 echo "--> Step 2 of 8: Installing PM2 process manager globally..."
+# حالا npm باید در دسترس باشد
 npm install -g pm2
 
-# مرحله ۳: نصب کلاینت Cloudflare Tunnel (cloudflared)
+# مرحله ۳: نصب Cloudflare Tunnel (cloudflared)
 echo "--> Step 3 of 8: Installing Cloudflare Tunnel client..."
-# دانلود فایل باینری برای معماری amd64 (استاندارد اکثر سرورها)
 curl -L --output cloudflared https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
-# دادن مجوز اجرا به فایل
 chmod +x cloudflared
-# انتقال فایل به مسیر استاندارد برای اجرای سراسری
 mv cloudflared /usr/local/bin/
 
-# مرحله ۴: دانلود کد اصلی سرور از گیت‌هاب
-
+# مرحله ۴: دانلود کد اصلی سرور از گیت‌هاب شما
+# ==============================================================================
+# !! مهم: آدرس گیت‌هاب خود را در خط زیر با آدرس صحیح جایگزین کنید !!
 GITHUB_REPO_URL="https://github.com/A-BP/iot-server-alpine.git"
-
+# ==============================================================================
 INSTALL_DIR="/opt/iot-server"
 echo "--> Step 4 of 8: Cloning the server code from ${GITHUB_REPO_URL}..."
 git clone "${GITHUB_REPO_URL}" "${INSTALL_DIR}"
 
-# مرحله ۵: نصب وابستگی‌های پروژه Node.js
+# بررسی اینکه آیا git clone موفقیت‌آمیز بوده است یا خیر
+if [ ! -d "${INSTALL_DIR}" ]; then
+    echo "❌ CRITICAL ERROR: Failed to clone the GitHub repository."
+    echo "Please check the URL in the script and your internet connection."
+    exit 1
+fi
+
+# مرحله ۵: نصب وابستگی‌های Node.js
 echo "--> Step 5 of 8: Installing Node.js project dependencies..."
 cd "${INSTALL_DIR}" && npm install
 
@@ -47,16 +52,12 @@ cd "${INSTALL_DIR}" && pm2 start server.js --name "iot-app"
 
 # مرحله ۷: اجرای اسکریپت دوم برای ایجاد اولین URI
 echo "--> Step 7 of 8: Generating the first URI..."
-# ابتدا اسکریپت را قابل اجرا می‌کنیم
 chmod +x "${INSTALL_DIR}/get-new-uri-alpine.sh"
-# سپس آن را اجرا می‌کنیم تا اولین URI ساخته و فایل HTML آپدیت شود
 "${INSTALL_DIR}/get-new-uri-alpine.sh"
 
-# مرحله ۸: تنظیم PM2 برای راه‌اندازی خودکار در استارتاپ سیستم
+# مرحله ۸: تنظیم PM2 برای اجرا در استارتاپ سیستم
 echo "--> Step 8 of 8: Configuring PM2 to run on system startup..."
 pm2 save
-# این دستور اسکریپت استارتاپ برای OpenRC (سیستم پیش‌فرض Alpine) تولید می‌کند
-# فرض بر این است که با کاربر root اجرا می‌شود
 pm2 startup openrc -u root --hp /root
 
 echo ""
