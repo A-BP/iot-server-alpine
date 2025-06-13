@@ -3,17 +3,7 @@
 set -e
 
 # ==============================================================================
-#   IoT Server Unified Setup Script (Final Version with All Fixes & Features)
-# ==============================================================================
-#   This script will:
-#   1. Read configuration from a file on a USB drive.
-#   2. Automatically fix Windows/Linux line ending issues.
-#   3. Set the system time and timezone.
-#   4. Install and configure V2Ray/Xray from a user-provided config file.
-#   5. Test the V2Ray proxy connection.
-#   6. Install and run the Node.js server and Cloudflare Tunnel.
-#   7. Generate a URI and send notifications via MQTT and Telegram.
-#   8. Display the final URI and time as the last output.
+#   IoT Server Unified Setup Script (Final Version with All Features & Fixes)
 # ==============================================================================
 
 # --- تابع اصلی برای تولید URI و ارسال نوتیفیکیشن ---
@@ -36,7 +26,6 @@ generate_and_publish_uri() {
     while [ -z "$URI" ] && [ $ATTEMPTS -lt $MAX_ATTEMPTS ]; do
         sleep 2
         if [ -f "$LOG_FILE" ]; then
-            # مستقیماً فایل لاگ را برای پیدا کردن URI می‌خوانیم
             URI=$(grep -o 'https://[a-z0-9-]*\.trycloudflare.com' "$LOG_FILE" | head -n 1)
         fi
         ATTEMPTS=$((ATTEMPTS + 1)); printf ".";
@@ -56,14 +45,24 @@ generate_and_publish_uri() {
             mosquitto_pub -h "broker.hivemq.com" -p 1883 -t "$MQTT_TOPIC" -m "$WSS_URI"
         fi
 
-        # ارسال به تلگرام (اگر در کانفیگ تعریف شده باشد)
+        # ارسال و تست نوتیفیکیشن تلگرام
         if [ -n "$BOT_TOKEN" ] && [ -n "$CHANNEL_ID" ]; then
             PROXY_OPTION=""
             if [ -n "$V2RAY_PROXY" ]; then PROXY_OPTION="--proxy ${V2RAY_PROXY}"; fi
-            echo "--> Sending Telegram notification..."
+            echo "--> Sending and verifying Telegram notification..."
             MESSAGE="✅ New IoT Server URI Generated:%0A${URI}"
-            # استفاده از تایم‌اوت ۱۵ ثانیه‌ای برای جلوگیری از گیر کردن اسکریپت
-            curl -s ${PROXY_OPTION} --connect-timeout 15 -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" -d chat_id="${CHANNEL_ID}" -d text="${MESSAGE}" > /dev/null || echo "--> WARNING: Telegram notification failed, but continuing."
+            
+            # خروجی curl را در یک متغیر ذخیره می‌کنیم تا پاسخ تلگرام را بررسی کنیم
+            TELEGRAM_RESPONSE=$(curl -s ${PROXY_OPTION} --connect-timeout 15 -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" -d chat_id="${CHANNEL_ID}" -d text="${MESSAGE}")
+            
+            # با jq پاسخ را بررسی می‌کنیم
+            if echo "${TELEGRAM_RESPONSE}" | jq -e '.ok' > /dev/null; then
+                echo "✅ Telegram notification sent successfully!"
+            else
+                echo "❌ WARNING: Telegram notification failed."
+                ERROR_DESC=$(echo "${TELEGRAM_RESPONSE}" | jq -r '.description')
+                echo "--> Telegram API Error: ${ERROR_DESC}"
+            fi
         fi
         
         echo ""
@@ -74,7 +73,7 @@ generate_and_publish_uri() {
         echo "=================================================="
     else
         echo "❌ ERROR: Could not retrieve a tunnel URI after 40 seconds."
-        echo "Please check logs for errors: cat ${LOG_FILE}"
+        echo "Please check the log file for errors: cat ${LOG_FILE}"
         exit 1
     fi
 }
@@ -86,13 +85,17 @@ generate_and_publish_uri() {
 # ==================================
 echo "### Starting IoT Server Setup ###"
 
+# نصب پیش‌نیاز اولیه برای اصلاح فایل‌ها
+apk update
+apk add coreutils
+
 # خواندن و اصلاح فایل iot-config.txt
 CONFIG_SRC_FILE="/media/com/command/iot-config.txt"
 if [ ! -f "$CONFIG_SRC_FILE" ]; then echo "❌ ERROR: Config file not found at ${CONFIG_SRC_FILE}!"; exit 1; fi
 echo "--> Converting and reading configuration from ${CONFIG_SRC_FILE}..."
+# ابتدا با sed کاراکترهای ویندوزی را حذف می‌کنیم
 sed -i 's/\r$//' "$CONFIG_SRC_FILE"
 source "$CONFIG_SRC_FILE"
-
 # فعال‌سازی مخزن Community و به‌روزرسانی
 echo "--> Enabling 'community' repository and updating..."
 sed -i -e 's/^#\(.*\/community\)$/\1/' /etc/apk/repositories
@@ -119,6 +122,7 @@ chmod +x /usr/local/bin/cloudflared
 V2RAY_CONFIG_SRC="/media/com/command/v2ray_config.json"
 if [ -f "$V2RAY_CONFIG_SRC" ]; then
     echo "--> V2Ray config file found. Installing and configuring Xray..."
+    # اصلاح خودکار فرمت فایل کانفیگ V2Ray
     sed -i 's/\r$//' "$V2RAY_CONFIG_SRC"
     
     curl -L -o xray.zip https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-64.zip
@@ -129,6 +133,7 @@ if [ -f "$V2RAY_CONFIG_SRC" ]; then
     cp "$V2RAY_CONFIG_SRC" "$XRAY_CONFIG_FILE"
 
     pm2 delete xray-client > /dev/null 2>&1 || true
+    # اجرای Xray با دستور صحیح برای PM2
     pm2 start /usr/local/bin/xray --name "xray-client" -- -c "$XRAY_CONFIG_FILE"
     
     echo "--> Testing V2Ray proxy connection..."
@@ -150,7 +155,7 @@ INSTALL_DIR="/opt/iot-server"
 echo "--> Cloning project and installing dependencies..."
 rm -rf "${INSTALL_DIR}"
 git clone "${GITHUB_REPO_URL}" "${INSTALL_DIR}"
-cp "$CONFIG_SRC_FILE" "${INSTALL_DIR}/iot-config.txt" # کپی کردن کانفیگ برای نگهداری
+cp "$CONFIG_SRC_FILE" "${INSTALL_DIR}/iot-config.txt"
 cd "${INSTALL_DIR}" && npm install
 pm2 delete iot-app > /dev/null 2>&1 || true
 pm2 start server.js --name "iot-app" --cwd "${INSTALL_DIR}"
