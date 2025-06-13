@@ -64,7 +64,7 @@ generate_and_publish_uri() {
 echo "### Starting IoT Server Setup ###"
 
 # خواندن تنظیمات از فایل روی فلش
-CONFIG_SRC_FILE="/media/usb/command/iot-config.txt"
+CONFIG_SRC_FILE="/media/com/command/iot-config.txt"
 if [ ! -f "$CONFIG_SRC_FILE" ]; then echo "❌ ERROR: Config file not found at ${CONFIG_SRC_FILE}!"; exit 1; fi
 echo "--> Reading configuration from ${CONFIG_SRC_FILE}..."
 source "$CONFIG_SRC_FILE"
