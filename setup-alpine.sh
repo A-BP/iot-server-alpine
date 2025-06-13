@@ -3,7 +3,17 @@
 set -e
 
 # ==============================================================================
-#   IoT Server Unified Setup Script (Final Version with Auto Format Fix)
+#   IoT Server Unified Setup Script (Final Version with All Fixes & Features)
+# ==============================================================================
+#   This script will:
+#   1. Read configuration from a file on a USB drive.
+#   2. Automatically fix Windows/Linux line ending issues.
+#   3. Set the system time and timezone.
+#   4. Install and configure V2Ray/Xray from a user-provided config file.
+#   5. Test the V2Ray proxy connection.
+#   6. Install and run the Node.js server and Cloudflare Tunnel.
+#   7. Generate a URI and send notifications via MQTT and Telegram.
+#   8. Display the final URI and time as the last output.
 # ==============================================================================
 
 # --- تابع اصلی برای تولید URI و ارسال نوتیفیکیشن ---
@@ -26,6 +36,7 @@ generate_and_publish_uri() {
     while [ -z "$URI" ] && [ $ATTEMPTS -lt $MAX_ATTEMPTS ]; do
         sleep 2
         if [ -f "$LOG_FILE" ]; then
+            # مستقیماً فایل لاگ را برای پیدا کردن URI می‌خوانیم
             URI=$(grep -o 'https://[a-z0-9-]*\.trycloudflare.com' "$LOG_FILE" | head -n 1)
         fi
         ATTEMPTS=$((ATTEMPTS + 1)); printf ".";
@@ -51,6 +62,7 @@ generate_and_publish_uri() {
             if [ -n "$V2RAY_PROXY" ]; then PROXY_OPTION="--proxy ${V2RAY_PROXY}"; fi
             echo "--> Sending Telegram notification..."
             MESSAGE="✅ New IoT Server URI Generated:%0A${URI}"
+            # استفاده از تایم‌اوت ۱۵ ثانیه‌ای برای جلوگیری از گیر کردن اسکریپت
             curl -s ${PROXY_OPTION} --connect-timeout 15 -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" -d chat_id="${CHANNEL_ID}" -d text="${MESSAGE}" > /dev/null || echo "--> WARNING: Telegram notification failed, but continuing."
         fi
         
@@ -74,16 +86,11 @@ generate_and_publish_uri() {
 # ==================================
 echo "### Starting IoT Server Setup ###"
 
-# نصب پیش‌نیازهای اولیه برای خواندن فایل‌ها
-apk update
-apk add coreutils dos2unix
-
 # خواندن و اصلاح فایل iot-config.txt
 CONFIG_SRC_FILE="/media/com/command/iot-config.txt"
 if [ ! -f "$CONFIG_SRC_FILE" ]; then echo "❌ ERROR: Config file not found at ${CONFIG_SRC_FILE}!"; exit 1; fi
-echo "--> Reading configuration from ${CONFIG_SRC_FILE}..."
-# اصلاح خودکار فرمت فایل کانفیگ اصلی
-dos2unix "$CONFIG_SRC_FILE"
+echo "--> Converting and reading configuration from ${CONFIG_SRC_FILE}..."
+sed -i 's/\r$//' "$CONFIG_SRC_FILE"
 source "$CONFIG_SRC_FILE"
 
 # فعال‌سازی مخزن Community و به‌روزرسانی
@@ -101,6 +108,7 @@ ln -sf /usr/share/zoneinfo/Asia/Tehran /etc/localtime
 echo "Asia/Tehran" > /etc/timezone
 rc-service openntpd start
 rc-update add openntpd default
+
 # نصب PM2 و Cloudflared
 echo "--> Installing core services..."
 npm install -g pm2
@@ -111,8 +119,7 @@ chmod +x /usr/local/bin/cloudflared
 V2RAY_CONFIG_SRC="/media/com/command/v2ray_config.json"
 if [ -f "$V2RAY_CONFIG_SRC" ]; then
     echo "--> V2Ray config file found. Installing and configuring Xray..."
-    # اصلاح خودکار فرمت فایل کانفیگ V2Ray
-    dos2unix "$V2RAY_CONFIG_SRC"
+    sed -i 's/\r$//' "$V2RAY_CONFIG_SRC"
     
     curl -L -o xray.zip https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-64.zip
     unzip -o xray.zip -d /usr/local/bin/ && rm xray.zip && chmod +x /usr/local/bin/xray
@@ -127,7 +134,7 @@ if [ -f "$V2RAY_CONFIG_SRC" ]; then
     echo "--> Testing V2Ray proxy connection..."
     sleep 5
     PROXY_PORT=$(jq -r '.inbounds[0].port' "$XRAY_CONFIG_FILE")
-    export V2RAY_PROXY="socks5h://127.0.0.1:${PROXY_PORT}" # export می‌کنیم تا در تابع هم در دسترس باشد
+    export V2RAY_PROXY="socks5h://127.0.0.1:${PROXY_PORT}"
     if curl -s --proxy "$V2RAY_PROXY" --connect-timeout 15 "https://www.google.com" > /dev/null; then
         echo "✅ V2Ray proxy test successful!"
     else
@@ -143,7 +150,7 @@ INSTALL_DIR="/opt/iot-server"
 echo "--> Cloning project and installing dependencies..."
 rm -rf "${INSTALL_DIR}"
 git clone "${GITHUB_REPO_URL}" "${INSTALL_DIR}"
-# ما دیگر فایل کانفیگ را کپی نمی‌کنیم چون متغیرها در محیط load شده‌اند
+cp "$CONFIG_SRC_FILE" "${INSTALL_DIR}/iot-config.txt" # کپی کردن کانفیگ برای نگهداری
 cd "${INSTALL_DIR}" && npm install
 pm2 delete iot-app > /dev/null 2>&1 || true
 pm2 start server.js --name "iot-app" --cwd "${INSTALL_DIR}"
