@@ -1,8 +1,9 @@
 #!/bin/bash
+# 'set -e' باعث می‌شود اسکریپت با اولین خطا متوقف شود
 set -e
 
 # ==============================================================================
-#   IoT Server Unified Setup Script (v11 - Self-Testing Final Version)
+#   IoT Server Unified Setup Script (The Ultimate Version)
 # ==============================================================================
 
 # --- تابع اصلی برای تولید URI و ارسال نوتیفیکیشن ---
@@ -20,7 +21,9 @@ generate_and_publish_uri() {
     MAX_ATTEMPTS=20
     while [ -z "$URI" ] && [ $ATTEMPTS -lt $MAX_ATTEMPTS ]; do
         sleep 2
-        if [ -f "$LOG_FILE" ]; then URI=$(grep -o 'https://[a-z0-9-]*\.trycloudflare.com' "$LOG_FILE" | head -n 1); fi
+        if [ -f "$LOG_FILE" ]; then
+            URI=$(grep -o 'https://[a-z0-9-]*\.trycloudflare.com' "$LOG_FILE" | head -n 1)
+        fi
         ATTEMPTS=$((ATTEMPTS + 1)); printf ".";
     done
     echo ""
@@ -41,11 +44,9 @@ generate_and_publish_uri() {
             if [ -n "$V2RAY_PROXY" ]; then PROXY_OPTION="--proxy ${V2RAY_PROXY}"; fi
             echo "--> Sending Telegram notification..."
             MESSAGE="✅ New IoT Server URI Generated:%0A${URI}"
-            # تایم‌اوت ۱۰ ثانیه‌ای اضافه شده تا اسکریپت گیر نکند
-            curl -s ${PROXY_OPTION} --connect-timeout 10 -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" -d chat_id="${CHANNEL_ID}" -d text="${MESSAGE}" > /dev/null || echo "--> WARNING: Telegram notification failed, but continuing."
+            curl -s ${PROXY_OPTION} --connect-timeout 10 -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" -d chat_id="${CHANNEL_ID}" -d text="${MESSAGE}" > /dev/null || echo "--> WARNING: Telegram notification failed, continuing."
         fi
         
-        # --- نمایش URI به عنوان آخرین خروجی اصلی ---
         echo ""
         echo "✅✅✅ SUCCESS! URI is Ready! ✅✅✅"
         echo "=================================================="
@@ -69,29 +70,34 @@ if [ ! -f "$CONFIG_SRC_FILE" ]; then echo "❌ ERROR: Config file not found at $
 echo "--> Reading configuration from ${CONFIG_SRC_FILE}..."
 source "$CONFIG_SRC_FILE"
 
-# نصب پیش‌نیازها
-echo "--> Installing dependencies..."
+# فعال‌سازی مخزن Community و به‌روزرسانی
+echo "--> Enabling 'community' repository and updating..."
 sed -i -e 's/^#\(.*\/community\)$/\1/' /etc/apk/repositories
 apk update
-# ntp-client برای همگام‌سازی یک‌باره و سریع ساعت اضافه شد
-apk add bash nodejs npm git curl mosquitto-clients unzip ntp-client
 
-# تنظیم ساعت با روش مستقیم
-echo "--> Setting timezone and syncing clock..."
+# نصب تمام پیش‌نیازها
+echo "--> Installing all dependencies..."
+apk add bash nodejs npm git curl mosquitto-clients tzdata openntpd unzip
+
+# تنظیم منطقه زمانی و همگام‌سازی ساعت
+echo "--> Setting timezone to Asia/Tehran and syncing time..."
 ln -sf /usr/share/zoneinfo/Asia/Tehran /etc/localtime
-# همگام‌سازی یک‌باره ساعت با سرورهای NTP
-ntp-client -s -h pool.ntp.org
+echo "Asia/Tehran" > /etc/timezone
+rc-service openntpd start
+rc-update add openntpd default
 
 # نصب PM2, Cloudflared, Xray
 echo "--> Installing core services..."
 npm install -g pm2
 curl -L -o /usr/local/bin/cloudflared https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
 chmod +x /usr/local/bin/cloudflared
-curl -L -o xray.zip https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-64.zip
-unzip -o xray.zip -d /usr/local/bin/ && rm xray.zip && chmod +x /usr/local/bin/xray
-# پیکربندی و اجرای V2Ray/Xray (اگر لینک آن ارائه شده باشد)
 if [ -n "$V2RAY_LINK" ]; then
-    echo "--> Configuring Xray (V2Ray client)..."
+    curl -L -o xray.zip https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-64.zip
+    unzip -o xray.zip -d /usr/local/bin/ && rm xray.zip && chmod +x /usr/local/bin/xray
+fi
+# پیکربندی و اجرای V2Ray/Xray
+if [ -n "$V2RAY_LINK" ]; then
+    echo "--> Configuring and starting Xray (V2Ray client)..."
     VMESS_JSON=$(echo "${V2RAY_LINK#vmess://}" | base64 -d)
     XRAY_CONFIG_FILE="/etc/xray/config.json"
     mkdir -p /etc/xray
@@ -101,17 +107,13 @@ EOF
     pm2 delete xray-client > /dev/null 2>&1 || true
     pm2 start "/usr/local/bin/xray -c /etc/xray/config.json" --name "xray-client"
     
-    # --- تست جدید برای V2Ray ---
     echo "--> Testing V2Ray proxy connection..."
-    sleep 5 # زمان برای راه‌اندازی Xray
-    # ما از گوگل برای تست استفاده می‌کنیم چون فیلتر نیست و به پروکسی نیاز ندارد
-    # اما با عبور از پروکسی، باید آی‌پی سرور V2Ray را برگرداند
+    sleep 5
     if curl -s --proxy socks5h://127.0.0.1:1080 --connect-timeout 10 "https://www.google.com" > /dev/null; then
         echo "✅ V2Ray proxy test successful!"
     else
         echo "❌ WARNING: V2Ray proxy test failed. Telegram notifications may not work."
     fi
-    # -------------------------
 fi
 
 # دانلود کد از گیت‌هاب و راه‌اندازی سرور
@@ -127,12 +129,12 @@ pm2 start server.js --name "iot-app" --cwd "${INSTALL_DIR}"
 pm2 save
 pm2 startup openrc -u root --hp /root
 
-# فراخوانی تابع تولید URI به عنوان آخرین مرحله اصلی
+# فراخوانی تابع تولید URI
 generate_and_publish_uri
 
-# نمایش ساعت نهایی به عنوان آخرین پیام
+# نمایش ساعت نهایی
 echo ""
 echo "--> Final System Time:"
 date
 echo ""
-echo "### Setup Is Complete! ###"
+echo "### Initial Setup Is Complete! ###"
