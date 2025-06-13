@@ -2,7 +2,7 @@
 set -e
 
 # ==============================================================================
-#   IoT Server Initial Setup Script (Final Version)
+#   IoT Server Initial Setup Script (Final Feature-Complete Version)
 # ==============================================================================
 
 echo "### Starting IoT Server One-Time Setup ###"
@@ -10,20 +10,16 @@ echo "### Starting IoT Server One-Time Setup ###"
 # خواندن و اصلاح فایل iot-config.txt
 CONFIG_SRC_FILE="/media/com/command/iot-config.txt"
 if [ ! -f "$CONFIG_SRC_FILE" ]; then echo "❌ ERROR: Config file not found at ${CONFIG_SRC_FILE}!"; exit 1; fi
-echo "--> Converting and reading configuration from ${CONFIG_SRC_FILE}..."
 sed -i 's/\r$//' "$CONFIG_SRC_FILE"
 source "$CONFIG_SRC_FILE"
 
-# فعال‌سازی مخزن Community و به‌روزرسانی
-echo "--> Enabling 'community' repository and updating..."
+# نصب تمام پیش‌نیازها
+echo "--> Installing all dependencies..."
 sed -i -e 's/^#\(.*\/community\)$/\1/' /etc/apk/repositories
 apk update
-
-# نصب تمام پیش‌نیازها (شامل jq برای تست تلگرام)
-echo "--> Installing all dependencies..."
 apk add bash nodejs npm git curl mosquitto-clients tzdata openntpd unzip jq
 
-# تنظیم ساعت و منطقه زمانی
+# تنظیم ساعت
 echo "--> Setting timezone and syncing clock..."
 ln -sf /usr/share/zoneinfo/Asia/Tehran /etc/localtime
 echo "Asia/Tehran" > /etc/timezone
@@ -49,6 +45,16 @@ if [ -f "$V2RAY_CONFIG_SRC" ]; then
     cp "$V2RAY_CONFIG_SRC" "$XRAY_CONFIG_FILE"
     pm2 delete xray-client > /dev/null 2>&1 || true
     pm2 start /usr/local/bin/xray --name "xray-client" -- -c "$XRAY_CONFIG_FILE"
+    
+    echo "--> Testing V2Ray proxy connection..."
+    sleep 5
+    PROXY_PORT=$(jq -r '.inbounds[0].port' "$XRAY_CONFIG_FILE")
+    V2RAY_PROXY="socks5h://127.0.0.1:${PROXY_PORT}"
+    if curl -s --proxy "$V2RAY_PROXY" --connect-timeout 15 "https://www.google.com" > /dev/null; then
+        echo "✅ V2Ray proxy test successful!"
+    else
+        echo "❌ WARNING: V2Ray proxy test failed. Telegram notifications may not work."
+    fi
 fi
 
 # دانلود کد از گیت‌هاب و راه‌اندازی سرور
@@ -64,6 +70,9 @@ pm2 start server.js --name "iot-app" --cwd "${INSTALL_DIR}"
 pm2 save
 pm2 startup openrc -u root --hp /root
 
+echo ""
+echo "--> Final System Time:"
+date
 echo ""
 echo "✅✅✅ Initial Setup Is Complete! ✅✅✅"
 echo "To start the tunnel and get a URI, run the following command:"

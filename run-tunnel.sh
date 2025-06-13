@@ -2,7 +2,7 @@
 set -e
 
 # ==============================================================================
-#   IoT Server Tunnel & Notification Runner (with Telegram Self-Test)
+#   IoT Server Tunnel & Notification Runner (Final Feature-Complete Version)
 # ==============================================================================
 
 echo "--> Attempting to generate a new WSS URI and publish..."
@@ -14,7 +14,7 @@ LOG_FILE="${INSTALL_DIR}/cloudflared.log"
 if [ -f "$CONFIG_FILE" ]; then
     source "$CONFIG_FILE"
 else
-    echo "❌ ERROR: Config file not found at ${CONFIG_FILE}. Please run the main setup script first."
+    echo "❌ ERROR: Config file not found. Run setup script first."
     exit 1
 fi
 
@@ -29,9 +29,7 @@ ATTEMPTS=0
 MAX_ATTEMPTS=20
 while [ -z "$URI" ] && [ $ATTEMPTS -lt $MAX_ATTEMPTS ]; do
     sleep 2
-    if [ -f "$LOG_FILE" ]; then
-        URI=$(grep -o 'https://[a-z0-9-]*\.trycloudflare.com' "$LOG_FILE" | head -n 1)
-    fi
+    if [ -f "$LOG_FILE" ]; then URI=$(grep -o 'https://[a-z0-9-]*\.trycloudflare.com' "$LOG_FILE" | head -n 1); fi
     ATTEMPTS=$((ATTEMPTS + 1)); printf ".";
 done
 echo ""
@@ -47,22 +45,24 @@ if [ -n "$URI" ]; then
         mosquitto_pub -h "broker.hivemq.com" -p 1883 -t "$MQTT_TOPIC" -m "$WSS_URI"
     fi
 
-    # --- بخش جدید و هوشمند برای ارسال و تست تلگرام ---
+    # --- بخش هوشمند برای ارسال و تست تلگرام ---
     if [ -n "$BOT_TOKEN" ] && [ -n "$CHANNEL_ID" ]; then
         echo "--> Sending and verifying Telegram notification..."
         PROXY_OPTION=""
-        if [ -n "$V2RAY_PROXY" ]; then PROXY_OPTION="--proxy ${V2RAY_PROXY}"; fi
-        MESSAGE="✅ New IoT Server URI Generated:%0A${URI}"
+        # چک می‌کنیم فایل کانفیگ V2Ray وجود دارد یا نه
+        if [ -f "/etc/xray/config.json" ]; then
+            PROXY_PORT=$(jq -r '.inbounds[0].port' /etc/xray/config.json)
+            V2RAY_PROXY="socks5h://127.0.0.1:${PROXY_PORT}"
+            PROXY_OPTION="--proxy ${V2RAY_PROXY}"
+        fi
         
-        # خروجی curl را در یک متغیر ذخیره می‌کنیم
+        MESSAGE="✅ New IoT Server URI Generated:%0A${URI}"
         TELEGRAM_RESPONSE=$(curl -s ${PROXY_OPTION} --connect-timeout 15 -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" -d chat_id="${CHANNEL_ID}" -d text="${MESSAGE}")
         
-        # با jq پاسخ را بررسی می‌کنیم. -e باعث می‌شود در صورت false بودن، دستور با خطا خارج شود
         if echo "${TELEGRAM_RESPONSE}" | jq -e '.ok' > /dev/null; then
             echo "✅ Telegram notification sent successfully!"
         else
             echo "❌ WARNING: Telegram notification failed."
-            # متن دقیق خطای دریافت شده از تلگرام را نمایش می‌دهیم
             ERROR_DESC=$(echo "${TELEGRAM_RESPONSE}" | jq -r '.description')
             echo "--> Telegram API Error: ${ERROR_DESC}"
         fi
