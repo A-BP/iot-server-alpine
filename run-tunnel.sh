@@ -38,7 +38,7 @@ fi
 
 # --- اجرای Cloudflare Tunnel ---
 # این پروسه حالا از پروکسی تنظیم شده در بالا استفاده خواهد کرد
-nohup /usr/local/bin/cloudflared tunnel --url http://localhost:8000 > "$LOG_FILE" 2>&1 &
+nohup /usr/local/bin/cloudflared tunnel --protocol http2 --url http://localhost:8000 > "$LOG_FILE" 2>&1 &
 
 echo "--> Waiting for tunnel to establish... (up to 40 seconds)"
 
