@@ -22,67 +22,53 @@ set -e
 # @param {string} $1 - Path to the JSON configuration file.
 # @returns {string} The listen address and port, space-separated. Exits on fatal error.
 #
+
 find_smart_proxy_details() {
     local config_file="$1"
-    local desired_tag="socks-for-tunnel"  # The specific tag we are looking for in the inbounds.
+    local desired_tag="socks-for-tunnel" # The specific tag we are looking for in the inbounds.
 
-    # --- Step 1: Validate the config file and inbound count ---
-    local inbound_count
-    inbound_count=$(jq '.inbounds | length' "$config_file")
-    if [ "$inbound_count" -eq 0 ]; then
-        echo "❌ ERROR: No 'inbounds' found in the config file: $config_file" >&2
+    # Find all SOCKS inbounds. The </dev/null prevents jq from hanging.
+    local all_socks_inbounds
+    all_socks_inbounds=$(jq -c '.inbounds[] | select(.type == "socks")' "$config_file" < /dev/null 2>/dev/null)
+    
+    # If no SOCKS inbounds exist at all, fail.
+    if [ -z "$all_socks_inbounds" ]; then
         return 1
     fi
 
-    # --- Step 2: Set the default proxy to the first inbound in the list ---
-    local default_listen default_port
-    # Read the 'listen' address. Use '127.0.0.1' as a fallback if the field is not specified (jq's // operator).
-    default_listen=$(jq -r '.inbounds[0].listen // "127.0.0.1"' "$config_file")
-    default_port=$(jq -r '.inbounds[0].listen_port' "$config_file")
+    local inbound_count
+    inbound_count=$(echo "$all_socks_inbounds" | wc -l)
+    
+    local final_inbound=""
 
-    # --- Step 3: Search for the definitively tagged inbound ---
-    local tagged_inbound_json
-    # Find the first inbound object that has the desired tag.
-    tagged_inbound_json=$(jq -r '.inbounds[] | select(.tag == "'"$desired_tag"'")' "$config_file")
+    # Search for the tagged SOCKS inbound
+    local tagged_inbound
+    tagged_inbound=$(echo "$all_socks_inbounds" | jq -c 'select(.tag == "'"$desired_tag"'")' < /dev/null)
 
-    # --- Step 4: Decision logic ---
-    local final_listen="$default_listen"
-    local final_port="$default_port"
-
-    if [ -n "$tagged_inbound_json" ]; then
-        # If a tagged inbound was found, it overrides the default and becomes our definitive choice.
-        echo "--> inbound با تگ ویژه ('$desired_tag') پیدا شد. از آن استفاده می‌شود." >&2
-        final_listen=$(echo "$tagged_inbound_json" | jq -r '.listen // "127.0.0.1"')
-        final_port=$(echo "$tagged_inbound_json" | jq -r '.port')
+    if [ -n "$tagged_inbound" ]; then
+        # Priority 1: Use the tagged inbound
+        final_inbound="$tagged_inbound"
     elif [ "$inbound_count" -gt 1 ]; then
-        # If no tagged inbound was found AND there are multiple inbounds, this is an ambiguous state.
-        # We must halt to prevent using the wrong proxy.
-        echo "❌❌❌ CONFIGURATION ERROR ❌❌❌" >&2
-        echo "Script halted. Your config file '$config_file' has multiple 'inbounds' but none have the required tag." >&2
-        echo "This is an ambiguous situation, and the script cannot safely choose a proxy." >&2
-        echo "" >&2
-        # Use a heredoc (cat <<EOF) for a clean, multi-line help message.
-        cat >&2 <<EOF
-✅ SOLUTION: Add a 'tag' to your desired inbound in the config file.
-Example:
-  "inbounds": [
-    {
-      "port": ${default_port},
-      "listen": "${default_listen}",
-      "protocol": "socks",
-      ...
-      "tag": "${desired_tag}"  // <-- Add this line
-    },
-    ...
-  ]
-EOF
-        return 1 # Exit the function with a non-zero status code to indicate failure.
+        # Priority 2: Handle ambiguity error
+        echo "❌ CONFIG ERROR: Multiple SOCKS inbounds found, but none have the tag: '$desired_tag'." >&2
+        return 1
+    else
+        # Priority 3: Use the single, untagged SOCKS inbound
+        final_inbound="$all_socks_inbounds"
     fi
 
-    # --- Step 5: Return the final values ---
-    # Print the listen address and port, space-separated, to stdout. This allows the caller
-    # to capture the output easily using the 'read' command.
-    echo "$final_listen $final_port"
+    # Extract details from the chosen 'final_inbound'
+    local listen_addr
+    listen_addr=$(echo "$final_inbound" | jq -r '.listen // "127.0.0.1"' < /dev/null)
+    
+    local port
+    port=$(echo "$final_inbound" | jq -r '.listen_port // .port' < /dev/null)
+
+    if [ -n "$port" ]; then
+        echo "$listen_addr $port"
+    else
+        return 1
+    fi
 }
 
 ###################################################################################
