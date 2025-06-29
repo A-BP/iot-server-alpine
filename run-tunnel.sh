@@ -155,7 +155,7 @@ if pm2 describe xray-client 2>/dev/null | grep -q "status.*online" && [ -f "$XRA
 	# Read the space-separated output into distinct variables
     read XRAY_LISTEN  XRAY_PROXY_PORT <<< "$proxy_details"
 	
-	XRAY_PROXY="socks5h://${XRAY_LISTEN}:${ XRAY_PROXY_PORT}"
+	XRAY_PROXY="socks5h://${XRAY_LISTEN}:${XRAY_PROXY_PORT}"
     if curl -s -m 5 --proxy "$XRAY_PROXY" --connect-timeout 15 "http://example.com" > /dev/null; then
         echo "✅ Xray is working! Using it as the active proxy."
         WORKING_PROXY="$XRAY_PROXY"
