@@ -38,7 +38,7 @@ find_smart_proxy_details() {
     local default_listen default_port
     # Read the 'listen' address. Use '127.0.0.1' as a fallback if the field is not specified (jq's // operator).
     default_listen=$(jq -r '.inbounds[0].listen // "127.0.0.1"' "$config_file")
-    default_port=$(jq -r '.inbounds[0].port' "$config_file")
+    default_port=$(jq -r '.inbounds[0].listen_port' "$config_file")
 
     # --- Step 3: Search for the definitively tagged inbound ---
     local tagged_inbound_json
@@ -153,9 +153,12 @@ if pm2 describe xray-client 2>/dev/null | grep -q "status.*online" && [ -f "$XRA
         exit 1
     fi
 	# Read the space-separated output into distinct variables
-    read XRAY_LISTEN  XRAY_PROXY_PORT <<< "$proxy_details"
+    # read XRAY_LISTEN  XRAY_PROXY_PORT <<< "$proxy_details"
+	XRAY_LISTEN=$(echo "$proxy_details" | cut -d' ' -f1)
+	XRAY_PROXY_PORT=$(echo "$proxy_details" | cut -d' ' -f2)
 	
-	XRAY_PROXY="socks5h://${XRAY_LISTEN}:${XRAY_PROXY_PORT}"
+	echo "--> Proxy detail found: LISTEN=$XRAY_LISTEN, port=$XRAY_PROXY_PORT"
+	XRAY_PROXY="socks5h://$XRAY_LISTEN:$XRAY_PROXY_PORT"
     if curl -s -m 5 --proxy "$XRAY_PROXY" --connect-timeout 15 "http://example.com" > /dev/null; then
         echo "✅ Xray is working! Using it as the active proxy."
         WORKING_PROXY="$XRAY_PROXY"
@@ -173,9 +176,12 @@ if pm2 describe singbox-client 2>/dev/null | grep -q "status.*online" && [ -f "$
 	if [ $? -ne 0 ]; then
         exit 1
     fi
-	read SINGBOX_LISTEN SINGBOX_PROXY_PORT <<< "$proxy_details"
+	# read SINGBOX_LISTEN SINGBOX_PROXY_PORT <<< "$proxy_details"
+	SINGBOX_LISTEN=$(echo "$proxy_details" | cut -d' ' -f1)
+	SINGBOX_PROXY_PORT=$(echo "$proxy_details" | cut -d' ' -f2)
 	
-    SINGBOX_PROXY="socks5h://${SINGBOX_LISTEN}:${SINGBOX_PROXY_PORT}"
+	echo "--> Proxy detail found: LISTEN=$SINGBOX_LISTEN, port=$SINGBOX_PROXY_PORT"
+    SINGBOX_PROXY="socks5h://$SINGBOX_LISTEN:$SINGBOX_PROXY_PORT"
 	if curl -s -m 5 --proxy "$SINGBOX_PROXY" --connect-timeout 15 "http://example.com" > /dev/null; then
 		echo "✅ Sing-box is working!"
 		if [ -z "$WORKING_PROXY" ]; then
