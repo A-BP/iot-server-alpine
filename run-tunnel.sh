@@ -25,49 +25,51 @@ set -e
 
 find_smart_proxy_details() {
     local config_file="$1"
-    local desired_tag="socks-for-tunnel" # The specific tag we are looking for in the inbounds.
+    local desired_tag="socks-for-tunnel"
 
-    # Find all SOCKS inbounds. The </dev/null prevents jq from hanging.
+    # Step 1: Find ALL SOCKS inbounds from the config file. Do NOT use head -n 1 yet.
     local all_socks_inbounds
-    all_socks_inbounds=$(jq -c '.inbounds[] | select(.type == "socks")' "$config_file" < /dev/null 2>/dev/null)
-    
-    # If no SOCKS inbounds exist at all, fail.
+    all_socks_inbounds=$(jq -c '.inbounds[] | select(.protocol == "socks" or .type == "socks")' "$config_file" < /dev/null 2>/dev/null)
+
+    # If the result is empty, it means no SOCKS inbounds exist at all.
     if [ -z "$all_socks_inbounds" ]; then
-        return 1
+        echo "failed"
+        return
     fi
 
-    local inbound_count
-    inbound_count=$(echo "$all_socks_inbounds" | wc -l)
-    
+    # Step 2: Now, apply the decision logic based on tags and count.
     local final_inbound=""
+    local inbound_count=$(echo "$all_socks_inbounds" | wc -l)
 
-    # Search for the tagged SOCKS inbound
+    # Search for a tagged inbound within the complete list.
     local tagged_inbound
     tagged_inbound=$(echo "$all_socks_inbounds" | jq -c 'select(.tag == "'"$desired_tag"'")' < /dev/null)
 
     if [ -n "$tagged_inbound" ]; then
-        # Priority 1: Use the tagged inbound
-        final_inbound="$tagged_inbound"
+        # Priority 1: A tagged inbound was found. Use the first one if there are multiple.
+        final_inbound=$(echo "$tagged_inbound" | head -n 1)
     elif [ "$inbound_count" -gt 1 ]; then
-        # Priority 2: Handle ambiguity error
-        echo "❌ CONFIG ERROR: Multiple SOCKS inbounds found, but none have the tag: '$desired_tag'." >&2
-        return 1
+        # Priority 2: Multiple untagged inbounds found. This is an ambiguous error.
+        echo "❌ CONFIG ERROR: Multiple SOCKS inbounds found, but none have the required tag: '$desired_tag'." >&2
+        echo "failed"
+        return
     else
-        # Priority 3: Use the single, untagged SOCKS inbound
+        # Priority 3: Only one SOCKS inbound exists, use it by default.
         final_inbound="$all_socks_inbounds"
     fi
 
-    # Extract details from the chosen 'final_inbound'
+    # Step 3: Extract details from the chosen 'final_inbound' object.
     local listen_addr
     listen_addr=$(echo "$final_inbound" | jq -r '.listen // "127.0.0.1"' < /dev/null)
     
     local port
     port=$(echo "$final_inbound" | jq -r '.listen_port // .port' < /dev/null)
 
+    # Step 4: Return the final result or the failure signature.
     if [ -n "$port" ]; then
         echo "$listen_addr $port"
     else
-        return 1
+        echo "failed"
     fi
 }
 
@@ -102,7 +104,7 @@ if [ -f "$XRAY_CONFIG_SRC" ]; then
     cp "$XRAY_CONFIG_SRC" "$XRAY_LOCAL_CONFIG"
     # Use pm2 to manage the process for resilience (restarts on failure, etc.)
 	pm2 delete xray-client || true
-    pm2 start /usr/local/bin/xray --name "xray-client" -- --config "$XRAY_LOCAL_CONFIG"
+    pm2 start /usr/local/bin/xray --name "xray-client" --run -c "$XRAY_LOCAL_CONFIG"
     sleep 5 # Give the service time to start up
 else
     echo "--> No new Xray config file found."
@@ -119,7 +121,7 @@ if [ -f "$SINGBOX_CONFIG_SRC" ]; then
     cp "$SINGBOX_CONFIG_SRC" "$SINGBOX_LOCAL_CONFIG"
     # Use pm2 for process management
 	pm2 delete singbox-client || true
-    pm2 start /usr/local/bin/sing-box --name "singbox-client" -- run -c "$SINGBOX_LOCAL_CONFIG"
+    pm2 start /usr/local/bin/sing-box --name "singbox-client" --run -c "$SINGBOX_LOCAL_CONFIG"
     sleep 5
 else
     echo "--> No new Sing-box config file found."
@@ -134,23 +136,25 @@ echo "--> [1/2] Testing Xray proxy..."
 if pm2 describe xray-client 2>/dev/null | grep -q "status.*online" && [ -f "$XRAY_LOCAL_CONFIG" ]; then
 	# Call the smart function to get proxy details
 	proxy_details=$(find_smart_proxy_details "$XRAY_LOCAL_CONFIG")
-	if [ $? -ne 0 ]; then
-        # The function printed an error message and exited with a non-zero code. Halt the script.
-        exit 1
-    fi
-	# Read the space-separated output into distinct variables
-    # read XRAY_LISTEN  XRAY_PROXY_PORT <<< "$proxy_details"
-	XRAY_LISTEN=$(echo "$proxy_details" | cut -d' ' -f1)
-	XRAY_PROXY_PORT=$(echo "$proxy_details" | cut -d' ' -f2)
-	
-	echo "--> Proxy detail found: LISTEN=$XRAY_LISTEN, port=$XRAY_PROXY_PORT"
-	XRAY_PROXY="socks5h://$XRAY_LISTEN:$XRAY_PROXY_PORT"
-    if curl -s -m 5 --proxy "$XRAY_PROXY" --connect-timeout 15 "http://example.com" > /dev/null; then
-        echo "✅ Xray is working! Using it as the active proxy."
-        WORKING_PROXY="$XRAY_PROXY"
-    else
-        echo "⚠️ Xray is running but connection test failed."
-    fi
+	# Check if the function returned the failure signature 
+	if [ "$proxy_details" = "failed" ]; then 
+		echo "❌ Function failed to find a usable SOCKS proxy in the Xray config." 
+		WORKING_PROXY="" 
+	else
+		# Read the space-separated output into distinct variables
+		# read XRAY_LISTEN  XRAY_PROXY_PORT <<< "$proxy_details"
+		XRAY_LISTEN=$(echo "$proxy_details" | cut -d' ' -f1)
+		XRAY_PROXY_PORT=$(echo "$proxy_details" | cut -d' ' -f2)
+		
+		echo "--> Proxy detail found: LISTEN=$XRAY_LISTEN, port=$XRAY_PROXY_PORT"
+		XRAY_PROXY="socks5h://$XRAY_LISTEN:$XRAY_PROXY_PORT"
+		if curl -s -m 5 --proxy "$XRAY_PROXY" --connect-timeout 15 "https://www.google.com" > /dev/null; then
+			echo "✅ Xray is working! Using it as the active proxy."
+			WORKING_PROXY="$XRAY_PROXY"
+		else
+			echo "⚠️ Xray is running but connection test failed."
+		fi
+	fi
 else
     echo "ℹ️ Xray is not running or has no config. Skipping test."
 fi
@@ -159,23 +163,25 @@ fi
 echo "--> [2/2] Testing Sing-box proxy..."
 if pm2 describe singbox-client 2>/dev/null | grep -q "status.*online" && [ -f "$SINGBOX_LOCAL_CONFIG" ]; then
 	proxy_details=$(find_smart_proxy_details "$SINGBOX_LOCAL_CONFIG")
-	if [ $? -ne 0 ]; then
-        exit 1
-    fi
-	# read SINGBOX_LISTEN SINGBOX_PROXY_PORT <<< "$proxy_details"
-	SINGBOX_LISTEN=$(echo "$proxy_details" | cut -d' ' -f1)
-	SINGBOX_PROXY_PORT=$(echo "$proxy_details" | cut -d' ' -f2)
-	
-	echo "--> Proxy detail found: LISTEN=$SINGBOX_LISTEN, port=$SINGBOX_PROXY_PORT"
-    SINGBOX_PROXY="socks5h://$SINGBOX_LISTEN:$SINGBOX_PROXY_PORT"
-	if curl -s -m 5 --proxy "$SINGBOX_PROXY" --connect-timeout 15 "http://example.com" > /dev/null; then
-		echo "✅ Sing-box is working!"
-		if [ -z "$WORKING_PROXY" ]; then
-			echo "Using it as the active proxy."
-			WORKING_PROXY="$SINGBOX_PROXY"
-		fi
+	if [ "$proxy_details" = "failed" ]; then 
+		echo "❌ Function failed to find a usable SOCKS proxy in the Xray config." 
+		WORKING_PROXY="" 
 	else
-		echo "⚠️ Sing-box is running but connection test failed."
+		# read SINGBOX_LISTEN SINGBOX_PROXY_PORT <<< "$proxy_details"
+		SINGBOX_LISTEN=$(echo "$proxy_details" | cut -d' ' -f1)
+		SINGBOX_PROXY_PORT=$(echo "$proxy_details" | cut -d' ' -f2)
+		
+		echo "--> Proxy detail found: LISTEN=$SINGBOX_LISTEN, port=$SINGBOX_PROXY_PORT"
+		SINGBOX_PROXY="socks5h://$SINGBOX_LISTEN:$SINGBOX_PROXY_PORT"
+		if curl -s -m 5 --proxy "$SINGBOX_PROXY" --connect-timeout 15 "https://www.google.com" > /dev/null; then
+			echo "✅ Sing-box is working!"
+			if [ -z "$WORKING_PROXY" ]; then
+				echo "Using it as the active proxy."
+				WORKING_PROXY="$SINGBOX_PROXY"
+			fi
+		else
+			echo "⚠️ Sing-box is running but connection test failed."
+		fi
 	fi
 else
 	echo "ℹ️ Sing-box is not running or has no config. Skipping test."
