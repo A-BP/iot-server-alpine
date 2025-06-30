@@ -164,7 +164,7 @@ echo "--> [2/2] Testing Sing-box proxy..."
 if pm2 describe singbox-client 2>/dev/null | grep -q "status.*online" && [ -f "$SINGBOX_LOCAL_CONFIG" ]; then
 	proxy_details=$(find_smart_proxy_details "$SINGBOX_LOCAL_CONFIG")
 	if [ "$proxy_details" = "failed" ]; then 
-		echo "❌ Function failed to find a usable SOCKS proxy in the Xray config." 
+		echo "❌ Function failed to find a usable SOCKS proxy in the Singbox config." 
 		WORKING_PROXY="" 
 	else
 		# read SINGBOX_LISTEN SINGBOX_PROXY_PORT <<< "$proxy_details"
