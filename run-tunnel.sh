@@ -127,71 +127,82 @@ else
     echo "--> No new Sing-box config file found."
 fi
 
-# --- Section 4: Smart Proxy Health Check and Selection ---
-echo "--> Starting proxy health check..."
-WORKING_PROXY=""
+# --- Section 4: Comprehensive Health Check for ALL Proxies ---
+echo "--> Starting comprehensive health check for all proxies..."
 
-# Test Xray (only if the process is online and its config file exists)
+# We will store the result of each successful test in a dedicated variable
+XRAY_HEALTHY_PROXY=""
+SINGBOX_HEALTHY_PROXY=""
+
+# Define an array of reliable and lightweight URLs for health checks
+HEALTH_CHECK_URLS=(
+    "http://detectportal.firefox.com/success.txt"
+    "http://connectivity-check.ubuntu.com"
+    "http://www.msftncsi.com/ncsi.txt"
+    "http://clients3.google.com/generate_204"
+)
+
+# --- [1/2] Comprehensively Testing Xray proxy ---
 echo "--> [1/2] Testing Xray proxy..."
 if pm2 describe xray-client 2>/dev/null | grep -q "status.*online" && [ -f "$XRAY_LOCAL_CONFIG" ]; then
-	# Call the smart function to get proxy details
-	proxy_details=$(find_smart_proxy_details "$XRAY_LOCAL_CONFIG")
-	# Check if the function returned the failure signature 
-	if [ "$proxy_details" = "failed" ]; then 
-		echo "❌ Function failed to find a usable SOCKS proxy in the Xray config." 
-		WORKING_PROXY="" 
-	else
-		# Read the space-separated output into distinct variables
-		# read XRAY_LISTEN  XRAY_PROXY_PORT <<< "$proxy_details" #white bash
-		XRAY_LISTEN=$(echo "$proxy_details" | cut -d' ' -f1)
-		XRAY_PROXY_PORT=$(echo "$proxy_details" | cut -d' ' -f2)
-		
-		echo "--> Proxy detail found: LISTEN=$XRAY_LISTEN, port=$XRAY_PROXY_PORT"
-		XRAY_PROXY="socks5h://$XRAY_LISTEN:$XRAY_PROXY_PORT"
-		if curl -s -m 5 --proxy "$XRAY_PROXY" --connect-timeout 15 "https://www.google.com" > /dev/null; then
-			echo "✅ Xray is working! Using it as the active proxy."
-			WORKING_PROXY="$XRAY_PROXY"
-		else
-			echo "⚠️ Xray is running but connection test failed."
-		fi
-	fi
-else
-    echo "ℹ️ Xray is not running or has no config. Skipping test."
-fi
+    proxy_details=$(find_smart_proxy_details "$XRAY_LOCAL_CONFIG")
+    if [ "$proxy_details" != "failed" ]; then
+        XRAY_LISTEN=$(echo "$proxy_details" | cut -d' ' -f1)
+        XRAY_PORT=$(echo "$proxy_details" | cut -d' ' -f2)
+        XRAY_PROXY_URI="socks5h://$XRAY_LISTEN:$XRAY_PORT"
+        echo "--> Found Xray SOCKS proxy: $XRAY_PROXY_URI. Starting loop test..."
 
-# If no working proxy has been found yet, test Sing-box as a fallback.
+        for TEST_URL in "${HEALTH_CHECK_URLS[@]}"; do
+            if curl -s -L --max-time 5 --proxy "$XRAY_PROXY_URI" --connect-timeout 10 "$TEST_URL" > /dev/null; then
+                echo "    ✅ SUCCESS: Xray connection confirmed via $TEST_URL"
+                XRAY_HEALTHY_PROXY="$XRAY_PROXY_URI" # Store the healthy proxy
+                break # Exit the loop for Xray
+            fi
+        done
+    fi
+else
+    echo "ℹ️ Xray is not running or has no config."
+fi
+# Final status for Xray
+if [ -z "$XRAY_HEALTHY_PROXY" ]; then echo "❌ Xray test FAILED for all URLs."; else echo "✅ Xray test PASSED."; fi
+
+
+# --- [2/2] Comprehensively Testing Sing-box proxy ---
 echo "--> [2/2] Testing Sing-box proxy..."
 if pm2 describe singbox-client 2>/dev/null | grep -q "status.*online" && [ -f "$SINGBOX_LOCAL_CONFIG" ]; then
-	proxy_details=$(find_smart_proxy_details "$SINGBOX_LOCAL_CONFIG")
-	if [ "$proxy_details" = "failed" ]; then 
-		echo "❌ Function failed to find a usable SOCKS proxy in the Singbox config." 
-		WORKING_PROXY="" 
-	else
-		# read SINGBOX_LISTEN SINGBOX_PROXY_PORT <<< "$proxy_details"
-		SINGBOX_LISTEN=$(echo "$proxy_details" | cut -d' ' -f1)
-		SINGBOX_PROXY_PORT=$(echo "$proxy_details" | cut -d' ' -f2)
-		
-		echo "--> Proxy detail found: LISTEN=$SINGBOX_LISTEN, port=$SINGBOX_PROXY_PORT"
-		SINGBOX_PROXY="socks5h://$SINGBOX_LISTEN:$SINGBOX_PROXY_PORT"
-		if curl -s -m 5 --proxy "$SINGBOX_PROXY" --connect-timeout 15 "https://example.com" > /dev/null; then
-			echo "✅ Sing-box is working!"
-			if [ -z "$WORKING_PROXY" ]; then
-				echo "Using it as the active proxy."
-				WORKING_PROXY="$SINGBOX_PROXY"
-			fi
-		else
-			echo "⚠️ Sing-box is running but connection test failed."
-		fi
-	fi
-else
-	echo "ℹ️ Sing-box is not running or has no config. Skipping test."
-fi
+    proxy_details=$(find_smart_proxy_details "$SINGBOX_LOCAL_CONFIG")
+    if [ "$proxy_details" != "failed" ]; then
+        SINGBOX_LISTEN=$(echo "$proxy_details" | cut -d' ' -f1)
+        SINGBOX_PORT=$(echo "$proxy_details" | cut -d' ' -f2)
+        SINGBOX_PROXY_URI="socks5h://$SINGBOX_LISTEN:$SINGBOX_PORT"
+        echo "--> Found Sing-box SOCKS proxy: $SINGBOX_PROXY_URI. Starting loop test..."
 
-# Final check to see if we found a usable proxy.
-if [ -z "$WORKING_PROXY" ]; then
-    echo "❌ No working proxy found. Will attempt to start tunnel without proxy."
+        for TEST_URL in "${HEALTH_CHECK_URLS[@]}"; do
+            if curl -s -L --max-time 5 --proxy "$SINGBOX_PROXY_URI" --connect-timeout 10 "$TEST_URL" > /dev/null; then
+                echo "    ✅ SUCCESS: Sing-box connection confirmed via $TEST_URL"
+                SINGBOX_HEALTHY_PROXY="$SINGBOX_PROXY_URI" # Store the healthy proxy
+                break # Exit the loop for Sing-box
+            fi
+        done
+    fi
 else
-    echo "--> Active proxy for this session is: $WORKING_PROXY"
+    echo "ℹ️ Sing-box is not running or has no config."
+fi
+# Final status for Sing-box
+if [ -z "$SINGBOX_HEALTHY_PROXY" ]; then echo "❌ Sing-box test FAILED for all URLs."; else echo "✅ Sing-box test PASSED."; fi
+
+
+# --- Final Decision Block ---
+echo "--> Health check complete. Deciding which proxy to use for the tunnel..."
+WORKING_PROXY=""
+if [ -n "$XRAY_HEALTHY_PROXY" ]; then
+    echo "✅ Priority 1: Xray is healthy. Using it for the tunnel."
+    WORKING_PROXY="$XRAY_HEALTHY_PROXY"
+elif [ -n "$SINGBOX_HEALTHY_PROXY" ]; then
+    echo "✅ Priority 2: Sing-box is healthy. Using it for the tunnel."
+    WORKING_PROXY="$SINGBOX_HEALTHY_PROXY"
+else
+    echo "❌ No working proxy found. Will attempt to start tunnel without proxy."
 fi
 
 # --- Section 5: Launching Cloudflare Tunnel with the Active Proxy ---
