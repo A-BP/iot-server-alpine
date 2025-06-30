@@ -43,7 +43,7 @@ find_smart_proxy_details() {
 
     # Search for a tagged inbound within the complete list.
     local tagged_inbound
-    tagged_inbound=$(echo "$all_socks_inbounds" | jq -c 'select(.tag == "'"$desired_tag"'")' < /dev/null)
+    tagged_inbound=$(echo "$all_socks_inbounds" | jq -c 'select(.tag == "'"$desired_tag"'")')
 
     if [ -n "$tagged_inbound" ]; then
         # Priority 1: A tagged inbound was found. Use the first one if there are multiple.
@@ -60,10 +60,10 @@ find_smart_proxy_details() {
 
     # Step 3: Extract details from the chosen 'final_inbound' object.
     local listen_addr
-    listen_addr=$(echo "$final_inbound" | jq -r '.listen // "127.0.0.1"' < /dev/null)
+    listen_addr=$(echo "$final_inbound" | jq -r '.listen // "127.0.0.1"')
     
     local port
-    port=$(echo "$final_inbound" | jq -r '.listen_port // .port' < /dev/null)
+    port=$(echo "$final_inbound" | jq -r '.listen_port // .port')
 
     # Step 4: Return the final result or the failure signature.
     if [ -n "$port" ]; then
@@ -104,7 +104,7 @@ if [ -f "$XRAY_CONFIG_SRC" ]; then
     cp "$XRAY_CONFIG_SRC" "$XRAY_LOCAL_CONFIG"
     # Use pm2 to manage the process for resilience (restarts on failure, etc.)
 	pm2 delete xray-client || true
-    pm2 start /usr/local/bin/xray --name "xray-client" --run -c "$XRAY_LOCAL_CONFIG"
+    pm2 start /usr/local/bin/xray --name "xray-client" -- run -c "$XRAY_LOCAL_CONFIG"
     sleep 5 # Give the service time to start up
 else
     echo "--> No new Xray config file found."
@@ -121,7 +121,7 @@ if [ -f "$SINGBOX_CONFIG_SRC" ]; then
     cp "$SINGBOX_CONFIG_SRC" "$SINGBOX_LOCAL_CONFIG"
     # Use pm2 for process management
 	pm2 delete singbox-client || true
-    pm2 start /usr/local/bin/sing-box --name "singbox-client" --run -c "$SINGBOX_LOCAL_CONFIG"
+    pm2 start /usr/local/bin/sing-box --name "singbox-client" -- run -c "$SINGBOX_LOCAL_CONFIG"
     sleep 5
 else
     echo "--> No new Sing-box config file found."
@@ -142,7 +142,7 @@ if pm2 describe xray-client 2>/dev/null | grep -q "status.*online" && [ -f "$XRA
 		WORKING_PROXY="" 
 	else
 		# Read the space-separated output into distinct variables
-		# read XRAY_LISTEN  XRAY_PROXY_PORT <<< "$proxy_details"
+		# read XRAY_LISTEN  XRAY_PROXY_PORT <<< "$proxy_details" #white bash
 		XRAY_LISTEN=$(echo "$proxy_details" | cut -d' ' -f1)
 		XRAY_PROXY_PORT=$(echo "$proxy_details" | cut -d' ' -f2)
 		
@@ -173,7 +173,7 @@ if pm2 describe singbox-client 2>/dev/null | grep -q "status.*online" && [ -f "$
 		
 		echo "--> Proxy detail found: LISTEN=$SINGBOX_LISTEN, port=$SINGBOX_PROXY_PORT"
 		SINGBOX_PROXY="socks5h://$SINGBOX_LISTEN:$SINGBOX_PROXY_PORT"
-		if curl -s -m 5 --proxy "$SINGBOX_PROXY" --connect-timeout 15 "https://www.google.com" > /dev/null; then
+		if curl -s -m 5 --proxy "$SINGBOX_PROXY" --connect-timeout 15 "https://example.com" > /dev/null; then
 			echo "✅ Sing-box is working!"
 			if [ -z "$WORKING_PROXY" ]; then
 				echo "Using it as the active proxy."
